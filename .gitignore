@@ -15,3 +15,6 @@ project/boot/
 project/plugins/project/
 logs
 target
+
+# parquet
+parquets/
