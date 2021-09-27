@@ -37,8 +37,6 @@ https://www.analyticsvidhya.com/blog/2020/11/what-is-the-difference-between-rdds
 most important capability is persisting, in other words caching, a dataset to be readily available (across worker nodes ?)
 
 
-
-
 potential pitfall/painpoint
 - while it's nice that RDDs are fault tolerant, it seems like a black/magic box kinda behaviour when it fails.. but who wants to handle any faults?
 - how often will we see a cluster fail?
@@ -46,21 +44,30 @@ potential pitfall/painpoint
 
 RDD[<some_case_class>] ==> DataSet
 
-we can use HIVE as a datastore? next step what is HIVE?
+we can use HIVE as a datastore? what is HIVE? pass on this one maybe
 
 - get xml DONE
 - SparkJob to transform the data and create a new DF ==> parquet DONE
 
-how long will the job take to stream from an EC2 instance?
+- how long will the job take to stream from an EC2 instance?
 - how long will it take to write parquet and read from parquet? DONE
 
 lower hanging fruits:
-- what's going on with instrument_id = 5618602
-- learn how to do something = 
+- what's going on with instrument_id = 5618602, seems to have no instrument_xrefs.xrefs
+- can we map values? Only with RDD, gotta go from DataFrame ==> RDD
 
 TODO:
-- use spark sql the right way before showing a POC to the team
+- DataFrame supposedly has less compile time guarantees, how can we transform to a dataset instead?
+  - DataFrame is DataSet[Row]
+- make a ReadMe
+- learn to deploy note any changes in performance
+- Try persist()? 
+- what type of queries do we want to run that we have in basex?
+- use spark sql the right way before showing a POC to the team (maybe by using RDDs so that we can see joins and shit easier)
 - why doesn't the schema work?
-- integrate into bl codebase
+- how will spark work with AWS?
 - how to use StructType that we learned from scala?
-- how well do joins perform?
+- how well do joins perform? do we even need joins?
+- use org.joda.time instead of java.time
+  - use java.time.Encoder then transform
+- integrate into bl codebase
