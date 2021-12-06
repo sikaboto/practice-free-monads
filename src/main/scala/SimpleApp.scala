@@ -11,9 +11,9 @@ object SimpleApp {
 
     case class Instr(id: BigInt, issue_key: String, primary_name: String, issue_date: java.time.LocalDate, cusip9: String)
 
-  def main(args: Array[String]) {
+  def main(args: Array[String]): Unit = {
     // val logFile = "src/main/resources/README.md" // Should be some file on your system
-    val spark = SparkSession.builder.appName("Simple Application").getOrCreate()
+    val spark = SparkSession.builder().appName("Simple Application").getOrCreate()
     import spark.implicits._
 
     def toInstrColumns(df: DataFrame) =
