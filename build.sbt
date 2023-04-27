@@ -1,11 +1,8 @@
-name := "Simple Project"
+crossScalaVersions := Seq("2.13.5", "3.2.0")
 
-version := "1.0"
-
-scalaVersion := "2.13.7"
-
-scalacOptions ++= Seq("-unchecked", "-deprecation")
-
-libraryDependencies ++= Seq(
-  "org.apache.spark" % "spark-sql_2.13" % "3.2.0",
-  "com.databricks" %% "spark-xml" % "0.14.0")
+// build.sbt
+lazy val hello = project.in(file("."))
+  .settings(
+    scalaVersion := "3.2.0",
+    libraryDependencies += "org.typelevel" %% "cats-effect" % "3.4.9"
+  )

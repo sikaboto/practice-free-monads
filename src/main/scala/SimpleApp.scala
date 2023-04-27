@@ -1,69 +1,96 @@
-/* SimpleApp.scala */
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.DataFrame
-import com.databricks.spark.xml._
-import java.nio.file.Paths
-import org.apache.spark.sql
-import org.apache.spark.sql.catalyst.encoders._
-import org.apache.spark.sql.SaveMode
+// import io.circe._, io.circe.generic.auto._, io.circe.parser._, io.circe.syntax._
 
-object SimpleApp {
+sealed trait Foo
+case class Bar(xs: Vector[String]) extends Foo
+case class Qux(i: Int, d: Option[Double]) extends Foo
 
-    case class Instr(id: BigInt, issue_key: String, primary_name: String, issue_date: java.time.LocalDate, cusip9: String)
+import cats.effect.{IO, IOApp, Resource, Sync, ExitCode}
+import cats.effect.std.Console
+import cats.syntax.all._
+import java.io._
 
-  def main(args: Array[String]): Unit = {
-    // val logFile = "src/main/resources/README.md" // Should be some file on your system
-    val spark = SparkSession.builder().appName("Simple Application").getOrCreate()
-    import spark.implicits._
+// function inputOutputStreams not needed
+def inputStream(f: File): Resource[IO, FileInputStream] =
+  // Resource.make {
+  //   IO.blocking(new FileInputStream(f))                         // build
+  // } { inStream =>
+  //   IO.blocking(inStream.close()).handleErrorWith(_ => IO.unit) // release
+  // }
+  Resource.fromAutoCloseable(IO(new FileInputStream(f)))
 
-    def toInstrColumns(df: DataFrame) =
-      df.select(
-        $"_id",
-        $"debt.muni_details.issue_key",
-        $"master_information.instrument_master.primary_name",
-        $"master_information.instrument_master.issue_date",
-        $"master_information.instrument_xref.xref._VALUE"(0))
-      .withColumnRenamed("master_information.instrument_xref.xref._VALUE AS `_VALUE`[0]", "cusip9")
-      .withColumnRenamed("_id", "id")
-      .where($"cusip9".isNotNull)
-
-
-    val dfFromXml0922 = spark
-      .read
-      .option("rowTag", "instrument")
-      .xml("/Users/cvenegas/Downloads/gsm_update_muni_APBNDLNK_GSMF00I.145.1.20210922T1000-04.xml")
-    // 3 minutes to read xml, with each row as an instrument
-    dfFromXml0922
-      .write
-      .format("parquet")
-      .mode(SaveMode.Overwrite)
-      .save("parquets/gsm_update_muni_APBNDLNK_GSMF00I.145.1.20210922T1000-04.parquet")
-    val ds0922Instrs = toInstrColumns(dfFromXml0922).as[Instr]
-    ds0922Instrs.collect() // this is pretty expensive
-
-    val dfFromXml0923 = spark
-      .read
-      .option("rowTag", "instrument")
-      .xml("/Users/cvenegas/Downloads/gsm_update_muni_APBNDLNK_GSMF00I.146.1.20210923T1000-04.xml")
-
-    dfFromXml0923
-      .write
-      .format("parquet")
-      .mode(SaveMode.Overwrite)
-      .save("parquets/gsm_update_muni_APBNDLNK_GSMF00I.146.1.20210923T1000-04.parquet")
-    val ds0923Instrs = toInstrColumns(dfFromXml0923).as[Instr]
-
-    // compute the diffs started at 22 
-    val diff09230922 = ds0922Instrs.unionAll(ds0923Instrs).except(ds0922Instrs.intersect(ds0923Instrs))
-    diff09230922.write.format("parquet").save("parquets/09222021diff09232021")
-
-    // this took 16:12:58 - 16:14:37 2 Minutes, and created 2M in total according to du -hs
-
-
-    //16:26:14 - 16:28:06 to write raw gsm.parquet 2 Minutes, and created ~100MB file
-    // these are just notes at this point, i did did everything in the shell
-
-    // group by works!
-    spark.stop()
+def inputStreamPoly[F[_]: Sync](f: File): Resource[F, FileInputStream] =
+  Resource.make {
+    Sync[F].blocking(new FileInputStream(f))
+  } { inStream =>
+    Sync[F].blocking(inStream.close()).handleErrorWith(_ => Sync[F].unit)
   }
+
+def outputStream(f: File): Resource[IO, FileOutputStream] =
+  Resource.make {
+    IO.blocking(new FileOutputStream(f))                         // build
+  } { outStream =>
+    IO.blocking(outStream.close()).handleErrorWith(_ => IO.unit) // release
+  }
+
+def inputOutputStreams(in: File, out: File): Resource[IO, (InputStream, OutputStream)] =
+  for {
+    inStream  <- inputStream(in)
+    outStream <- outputStream(out)
+  } yield (inStream, outStream)
+
+// transfer will do the real work
+
+
+def transmit(origin: InputStream, destination: OutputStream, buffer: Array[Byte], acc: Long): IO[Long] =
+  for {
+    amount <- IO.blocking(origin.read(buffer, 0, buffer.size))
+    count  <- if(amount > -1) IO.blocking(destination.write(buffer, 0, amount)) >> transmit(origin, destination, buffer, acc + amount)
+              else IO.pure(acc) // End of read stream reached (by java.io.InputStream contract), nothing to write
+  } yield count // Returns the actual amount of bytes transmitted // Returns the actual amount of bytes transmitted
+
+def transfer(origin: InputStream, destination: OutputStream): IO[Long] =
+  transmit(origin, destination, new Array[Byte](1024 * 10), 0L)
+
+
+def copy(origin: File, destination: File): IO[Long] = {
+  val inIO: IO[InputStream]  = IO(new FileInputStream(origin))
+  val outIO:IO[OutputStream] = IO(new FileOutputStream(destination))
+
+  (inIO, outIO)              // Stage 1: Getting resources
+    .tupled                  // From (IO[InputStream], IO[OutputStream]) to IO[(InputStream, OutputStream)]
+    .bracket{
+      case (in, out) =>
+        transfer(in, out)    // Stage 2: Using resources (for copying data, in this case)
+    } {
+      case (in, out) =>      // Stage 3: Freeing resources
+        (IO(in.close()), IO(out.close()))
+        .tupled              // From (IO[Unit], IO[Unit]) to IO[(Unit, Unit)]
+        .void.handleErrorWith(_ => IO.unit)
+    }
 }
+// def copy(origin: File, destination: File): IO[Long] =
+//   inputOutputStreams(origin, destination).use { case (in, out) =>
+//     transfer(in, out)
+//   }
+
+
+// obviously this isn't actually the problem definition, but it's kinda fun
+object Main extends IOApp {
+  override def run(args: List[String]): IO[ExitCode] =
+    for {
+      _      <- if(args.length < 2) IO.raiseError(new IllegalArgumentException("Need origin and destination files"))
+                else IO.unit
+      orig = new File(args(0))
+      dest = new File(args(1))
+      _ <- IO.blocking(dest.exists()).ifM(
+        Console[IO].println("Output file exists. Enter yes to continue") >> Console[IO].readLine.map(_ == "yes").ifM(IO.unit, IO.raiseError( new IllegalArgumentException("Aborting"))),
+        IO.raiseError(new IllegalArgumentException("Finish execution"))
+      )
+      _ <- if (orig == dest) IO.raiseError(new IllegalArgumentException("Input and output file names cannot be the same"))
+           else IO.unit
+      count <- copy(orig, dest)
+      _     <- IO.println(s"$count bytes copied from ${orig.getPath} to ${dest.getPath}")
+    } yield ExitCode.Success
+}
+
+
